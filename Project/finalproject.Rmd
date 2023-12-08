@@ -1,1 +1,80 @@
+---
+title: "Final Project for Causal Inference"
+subtitle: "Stat 156, Fall 2023"
+author: "Minjae Seo, Cheng Zeng"
+output: github_document
+fontsize: 12pt
+urlcolor: blue
+---
+
+```{r read, echo = FALSE, message = FALSE}
+# with "base" read.dta()
+data_deming <- read_dta("~/Desktop/Fall23/Stat 156/final project/dat/data_Deming_2008_0217.dta")
+library(haven)
+library(dplyr)
+library(tidyverse)
+library(sandwich)
+library(lmtest)
+library(matrixStats)
+```
+
+## Data cleaning parts
+```{r}
+clean <- data_deming
+```
+
+```{r}
+# Modify Age2_Mo variable
+clean = clean %>% 
+  mutate(Age2_Mo86 = ifelse(is.na(Age_Mo86), PPVTAge86, Age_Mo86)) %>%
+  mutate(Age2_Mo88 = ifelse(is.na(Age_Mo88), PPVTAge88, Age_Mo88)) %>%
+  mutate(Age2_Mo90 = ifelse(is.na(Age_Mo90), PPVTAge90, Age_Mo90)) %>%
+  mutate(Age2_Mo92 = ifelse(is.na(Age_Mo92), PPVTAge92, Age_Mo92)) %>%
+  mutate(Age2_Mo94 = ifelse(is.na(Age_Mo94), PPVTAge94, Age_Mo94)) %>%
+  mutate(Age2_Mo96 = ifelse(is.na(Age_Mo96), PPVTAge96, Age_Mo96)) %>%
+  mutate(Age2_Mo98 = ifelse(is.na(Age_Mo98), PPVTAge98, Age_Mo98)) %>%
+  mutate(Age2_Mo100 = ifelse(is.na(Age_Mo100), PPVTAge100, Age_Mo100)) %>%
+  mutate(Age2_Mo102 = ifelse(is.na(Age_Mo102), PPVTAge102, Age_Mo102)) %>%
+  mutate(Age2_Mo104 = ifelse(is.na(Age_Mo104), PPVTAge104, Age_Mo104))
+```
+```{r}
+clean = clean %>% 
+  mutate(Age2_Mo86 = ifelse(is.na(Age2_Mo86)&(!is.na(Age2_Mo88))&Age2_Mo88>=25, Age2_Mo88-24, Age2_Mo86)) %>%
+  mutate(Age2_Mo88 = ifelse(is.na(Age2_Mo88)&(!is.na(Age2_Mo90))&Age2_Mo90>=25, Age2_Mo90-24, Age2_Mo88)) %>%
+  mutate(Age2_Mo90 = ifelse(is.na(Age2_Mo90)&(!is.na(Age2_Mo92))&Age2_Mo92>=25, Age2_Mo92-24, Age2_Mo90)) %>%
+  mutate(Age2_Mo92 = ifelse(is.na(Age2_Mo92)&(!is.na(Age2_Mo94))&Age2_Mo94>=25, Age2_Mo94-24, Age2_Mo92)) %>%
+  mutate(Age2_Mo94 = ifelse(is.na(Age2_Mo94)&(!is.na(Age2_Mo96))&Age2_Mo96>=25, Age2_Mo96-24, Age2_Mo94)) %>%
+  mutate(Age2_Mo96 = ifelse(is.na(Age2_Mo96)&(!is.na(Age2_Mo98))&Age2_Mo98>=25, Age2_Mo98-24, Age2_Mo96)) %>%
+  mutate(Age2_Mo98 = ifelse(is.na(Age2_Mo98)&(!is.na(Age2_Mo100))&Age2_Mo100>=25, Age2_Mo100-24, Age2_Mo98)) %>%
+  mutate(Age2_Mo100 = ifelse(is.na(Age2_Mo100)&(!is.na(Age2_Mo102))&Age2_Mo102>=25, Age2_Mo102-24, Age2_Mo100)) %>%
+  mutate(Age2_Mo102 = ifelse(is.na(Age2_Mo102)&(!is.na(Age2_Mo104))&Age2_Mo104>=25, Age2_Mo104-24, Age2_Mo102))
+```
+```{r}
+# Create Age2_Yr variable
+clean <- clean %>% 
+mutate(Age_Yr86 = Age_Mo86 %/% 12) %>% 
+mutate(Age_Yr88 = Age_Mo88 %/% 12) %>% 
+mutate(Age_Yr90 = Age_Mo90 %/% 12) %>% 
+mutate(Age_Yr92 = Age_Mo92 %/% 12) %>% 
+mutate(Age_Yr94 = Age_Mo94 %/% 12) %>% 
+mutate(Age_Yr96 = Age_Mo96 %/% 12) %>% 
+mutate(Age_Yr98 = Age_Mo98 %/% 12) %>% 
+mutate(Age_Yr100 = Age_Mo100 %/% 12) %>% 
+mutate(Age_Yr102 = Age_Mo102 %/% 12) %>% 
+mutate(Age_Yr104 = Age_Mo104 %/% 12) %>% 
+mutate(Age2_Yr86 = Age2_Mo86 %/% 12) %>% 
+mutate(Age2_Yr88 = Age2_Mo88 %/% 12) %>% 
+mutate(Age2_Yr90 = Age2_Mo90 %/% 12) %>% 
+mutate(Age2_Yr92 = Age2_Mo92 %/% 12) %>% 
+mutate(Age2_Yr94 = Age2_Mo94 %/% 12) %>% 
+mutate(Age2_Yr96 = Age2_Mo96 %/% 12) %>% 
+mutate(Age2_Yr98 = Age2_Mo98 %/% 12) %>% 
+mutate(Age2_Yr100 = Age2_Mo100 %/% 12) %>% 
+mutate(Age2_Yr102 = Age2_Mo102 %/% 12) %>% 
+mutate(Age2_Yr104 = Age2_Mo104 %/% 12)
+```
+
+
+
+
 
