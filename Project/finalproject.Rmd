@@ -9,20 +9,25 @@ urlcolor: yellow
 
 ```{r read, echo = FALSE, message = FALSE}
 # with "base" read.dta()
-data_deming <- read_dta("~/Desktop/Fall23/Stat 156/final project/dat/data_Deming_2008_0217.dta")
+# R-packages
+data_deming <- read_dta("~/Desktop/Fall23/Stat 156/final project/data/data_Deming_2008_0217.dta")
 library(haven)
 library(dplyr)
 library(tidyverse)
 library(sandwich)
 library(lmtest)
 library(matrixStats)
+library(mice)
+library(knitr)
 ```
 
-## Data cleaning parts
+
 ```{r}
+## Assign data as clean
 clean <- data_deming
 ```
 
+## Data cleaning Parts
 ```{r}
 # Modify Age2_Mo variable
 clean = clean %>% 
@@ -73,7 +78,493 @@ mutate(Age2_Yr100 = Age2_Mo100 %/% 12) %>%
 mutate(Age2_Yr102 = Age2_Mo102 %/% 12) %>% 
 mutate(Age2_Yr104 = Age2_Mo104 %/% 12)
 ```
+```{r}
+clean <- clean %>% group_by(MotherID) %>% mutate(
+      Elig_86 = sum(Age_Mo86 > 47 & !is.na(Age_Mo86)),
+      Elig_88 = sum(Age_Mo88 > 47 & !is.na(Age_Mo88)),
+      Elig_90 = sum(Age_Mo90 > 47 & !is.na(Age_Mo90)),
+      Elig2_86 = sum(Age2_Mo86 > 47 & !is.na(Age2_Mo86)),
+      Elig2_88 = sum(Age2_Mo88 > 47 & !is.na(Age2_Mo88)),
+      Elig2_90 = sum(Age2_Mo90 > 47 & !is.na(Age2_Mo90))
+    ) %>%
+    mutate(
+      Elig_86 = if_else(Elig_86 > 1, 1, 0),
+      Elig_88 = if_else(Elig_88 > 1, 1, 0),
+      Elig_90 = if_else(Elig_90 > 1, 1, 0),
+      Elig2_86 = if_else(Elig2_86 > 1, 1, 0),
+      Elig2_88 = if_else(Elig2_88 > 1, 1, 0),
+      Elig2_90 = if_else(Elig2_90 > 1, 1, 0)
+    )
 
+```
+
+*Exclude small number of kids who died prior to eligibility*;
+```{r}
+clean <- filter(clean, Age2_Mo90>=48)
+
+clean <- clean %>% mutate(Dead_86 = ifelse(Res86==8, 1, 0)) %>% 
+  mutate(Dead_88 = ifelse(Res88==8, 1, 0)) %>% 
+  mutate(Dead_90 = ifelse(Res90==8, 1, 0))
+clean <- clean %>% 
+  mutate(Elig_86 = ifelse(Dead_86==1, 0, Elig_86)) %>% 
+  mutate(Elig2_86 = ifelse(Dead_86==1, 0, Elig2_86)) %>% 
+  mutate(Elig_88 = ifelse(Dead_88==1, 0, Elig_88)) %>% 
+  mutate(Elig2_88 = ifelse(Dead_86==1, 0, Elig2_88)) %>% 
+  mutate(Elig_90 = ifelse(Dead_90==1, 0, Elig_90)) %>% 
+  mutate(Elig2_90 = ifelse(Dead_90==1, 0, Elig2_90))
+
+clean <- clean %>% mutate(Deceased = ifelse(Res104==8,1,0))
+```
+
+```{r}
+clean <- clean %>% filter(Dead_90 != 1 & Dead_88!= 1 & Dead_86 != 1)
+clean <- clean %>% filter(Elig2_90 == 1)
+```
+
+```{r}
+getmax <- function(x,y){
+  maxvec <- numeric(length(x))
+  for (i in 1:length(x)) {
+    if(!is.na(x[i])&!is.na(y[i])){
+      maxvec[i] <- max(x[i],y[i])
+    }
+    if(!is.na(x[i])&is.na(y[i])){
+      maxvec[i] <- x[i]
+    }
+    if(is.na(x[i])&!is.na(y[i])){
+      maxvec[i] <-y[i]
+    }
+    if(is.na(x[i])&is.na(y[i])){
+      maxvec[i] <- 0
+    }
+  }
+  return(maxvec)
+}
+# HS,Pre,None
+clean <- clean %>% 
+  mutate(HS_90=getmax(Ever_HS88,Ever_HS90)) %>% 
+  mutate(Pre_90=getmax(Ever_Preschool88,Ever_Preschool90))
+
+clean <- clean %>% 
+  mutate(HS_90=ifelse(is.na(HS_90),0,HS_90)) %>% 
+  mutate(Pre_90=ifelse(is.na(Pre_90),0,Pre_90))
+
+clean <- clean %>% 
+  mutate(Pre_90=ifelse(HS_90==1,0,Pre_90)) %>%
+  mutate(None_90=ifelse((HS_90==1|Pre_90==1),0,1))
+
+# HS2,Pre2,None2
+clean <- clean %>% 
+  mutate(HS2_90=getmax(Ever_HS88,Ever_HS90)) %>% 
+  mutate(Pre2_90=getmax(Ever_Preschool88,Ever_Preschool90))
+
+clean <- clean %>% 
+  mutate(HS2_90=ifelse(is.na(HS2_90),0,HS2_90)) %>% 
+  mutate(Pre2_90=ifelse(is.na(Pre2_90),0,Pre2_90))
+
+clean <- clean %>% 
+  mutate(Pre2_90=ifelse(HS2_90==1,0,Pre2_90)) %>%
+  mutate(None2_90=ifelse((HS2_90==1|Pre2_90==1),0,1))
+```
+
+*Create dummy for "fixed effects" sample - families where HS participation varies across siblings*;
+
+```{r, warning=FALSE}
+clean <- clean %>% group_by(MotherID) %>% 
+  mutate(NumElig90 = sum(Age2_Mo90 > 47 & !is.na(Age2_Mo90)))
+```
+
+# Modify this part 
+```{r,warning=FALSE}
+numofelig <- function(i,data){
+  nrow(data[data$MotherID == data$MotherID[i],])
+}
+for(i in 1:nrow(clean)){
+  clean$numofageeligsib[i] <- numofelig(i,clean)
+  clean$sibhs[i] <- sum(clean[clean$MotherID == clean$MotherID[i],]$HS_90)
+  clean$sibpre[i] <- sum(clean[clean$MotherID == clean$MotherID[i],]$Pre_90)
+  clean$sibnone[i] <- sum(clean[clean$MotherID == clean$MotherID[i],]$None_90)
+}
+
+clean$HS_FE90 <- -1
+clean$Pre_FE90 <- -1
+clean$None_FE90 <- -1
+clean$PreK_FE <- -1
+clean$PreK_FE <- NA
+
+for(i in 1:nrow(clean)){
+  if(clean$sibhs[i] != clean$numofageeligsib[i] && clean$sibhs[i] != 0){# 有HS，也有非HS
+    clean$PreK_FE[i] <- 1
+  }
+  if(clean$sibpre[i] != clean$numofageeligsib[i] && clean$sibpre[i] != 0){# 有Pre，也有非Pre
+    clean$PreK_FE[i] <- 1
+  }
+  if(clean$sibnone[i] != clean$numofageeligsib[i] && clean$sibnone[i] != 0){ # 有None，也有非None
+    clean$PreK_FE[i] <- 1
+  }
+}
+
+clean <- clean %>%
+  mutate(PreK_FE = ifelse(PreK_FE == 1, ifelse(HS_90 == 1, 1, ifelse(Pre_90 == 1, 2, 3)), NA))
+
+# Prek
+clean <- clean %>% 
+  mutate(PreK = ifelse(HS2_90==1,1,0)) %>% 
+  mutate(PreK = ifelse(Pre2_90==1,2,PreK)) %>% 
+  mutate(PreK = ifelse(None2_90==1,3,PreK))
+```
+## End of the data cleaning parts we got 3637 samples
+
+```{r}
+clean <- clean %>%
+  mutate(
+    Hispanic = ifelse(Race_Child == 1, 1, 0),
+    Black = ifelse(Race_Child == 2, 1, 0),
+    White = ifelse(Race_Child == 3, 1, 0),
+    Male = ifelse(Sex_Child == 1, 1, 0),
+    NonBlack = Race_Child != 2 & !is.na(Race_Child),
+    FirstBorn = ifelse(BirthOrder == 1 & !is.na(BirthOrder), 1, 0)
+  )
+```
+
+```{r}
+# NON-BLACK AND BLACK FOR RACE_CHILD
+for (k in 1:nrow(clean)){
+  if(clean$Race_Child[k]==3){
+    clean$Race_Child[k] = 1
+  }
+}
+```
+
+##  Table 1: Summary Statistics
+```{r}
+clean <- clean %>% 
+  mutate(
+ NetFamInc78=NetFamInc78*2.82,
+ NetFamInc79=NetFamInc79*2.54,
+ NetFamInc80=NetFamInc80*2.24,
+ NetFamInc81=NetFamInc81*2.03,
+ NetFamInc82=NetFamInc82*1.90,
+ NetFamInc83=NetFamInc83*1.85,
+ NetFamInc84=NetFamInc84*1.78,
+ NetFamInc85=NetFamInc85*1.71,
+ NetFamInc86=NetFamInc86*1.68,
+ NetFamInc87=NetFamInc87*1.62,
+ NetFamInc88=NetFamInc88*1.55,
+ NetFamInc89=NetFamInc89*1.48,
+ NetFamInc90=NetFamInc90*1.41,
+ NetFamInc91=NetFamInc91*1.35,
+ NetFamInc92=NetFamInc92*1.31,
+ NetFamInc93=NetFamInc93*1.27,
+ NetFamInc95=NetFamInc95*1.21,
+ NetFamInc97=NetFamInc97*1.15,
+ NetFamInc99=NetFamInc99*1.10,
+ NetFamInc101=NetFamInc101*1.04)
+```
+
+```{r}
+clean <- clean %>%
+  rowwise() %>%
+  mutate(
+    PermInc = mean(c_across(matches("^NetFamInc(78|79|80|81|82|83|84|85|86|87|88|89|90|91|92|93|95|97|99|101)$")), na.rm = TRUE),
+    lnPermInc = log(PermInc), PermInc_std=scale(PermInc)
+  )
+
+# Mean and SD of permanent Income for each outcome
+summary_PermInc = clean %>% group_by(Race_Child, PreK) %>%
+  summarize(avg.PermInc = mean(PermInc,na.rm = TRUE),sd.PermInc = sd(PermInc, na.rm = TRUE))
+summary_PermInc_FE = clean %>% group_by(Race_Child, PreK_FE) %>%
+  summarize(avg.PermInc = mean(PermInc,na.rm = TRUE),sd.PermInc = sd(PermInc, na.rm = TRUE))
+summary_PermInc_FE <- summary_PermInc_FE[-c(7, 8), ]
+```
+
+# cut-off points
+```{r}
+clean= clean %>% mutate(
+  HighGrade_Moth79= ifelse(HighGrade_Moth79==95, NA, HighGrade_Moth79),
+  HighGrade_Moth80= ifelse(HighGrade_Moth80==95, NA, HighGrade_Moth80),
+  HighGrade_Moth81= ifelse(HighGrade_Moth81==95, NA, HighGrade_Moth81),
+  HighGrade_Moth82= ifelse(HighGrade_Moth82==95, NA, HighGrade_Moth82),
+  HighGrade_Moth83= ifelse(HighGrade_Moth83==95, NA, HighGrade_Moth84),
+  HighGrade_Moth84= ifelse(HighGrade_Moth84==95, NA, HighGrade_Moth84),
+  HighGrade_Moth85= ifelse(HighGrade_Moth85==95, NA, HighGrade_Moth85),
+  HighGrade_Moth86= ifelse(HighGrade_Moth86==95, NA, HighGrade_Moth86),
+  HighGrade_Moth87= ifelse(HighGrade_Moth87==95, NA, HighGrade_Moth87),
+  HighGrade_Moth88= ifelse(HighGrade_Moth88==95, NA, HighGrade_Moth88),
+  HighGrade_Moth89= ifelse(HighGrade_Moth89==95, NA, HighGrade_Moth89),
+  HighGrade_Moth90= ifelse(HighGrade_Moth90==95, NA, HighGrade_Moth90),
+  HighGrade_Moth91= ifelse(HighGrade_Moth91==95, NA, HighGrade_Moth91),
+  HighGrade_Moth92= ifelse(HighGrade_Moth92==95, NA, HighGrade_Moth92),
+  HighGrade_Moth93= ifelse(HighGrade_Moth93==95, NA, HighGrade_Moth93),
+  HighGrade_Moth94= ifelse(HighGrade_Moth94==95, NA, HighGrade_Moth94),
+  HighGrade_Moth96= ifelse(HighGrade_Moth96==95, NA, HighGrade_Moth96),
+  HighGrade_Moth98= ifelse(HighGrade_Moth98==95, NA, HighGrade_Moth98),
+  HighGrade_Moth100= ifelse(HighGrade_Moth100==95, NA, HighGrade_Moth100),
+  HighGrade_Moth102= ifelse(HighGrade_Moth102==95, NA, HighGrade_Moth102),
+  HighGrade_Moth104= ifelse(HighGrade_Moth104==95, NA, HighGrade_Moth104))
+
+clean <- clean %>%
+  rowwise() %>%
+  mutate(
+    MothED = max(c_across(matches("^HighGrade_Moth(78|79|80|81|82|83|84|85|86|87|88|89|90|91|92|93|94|96|98|100|102|104)$"))))
+```
+
+```{r}
+clean = clean%>%mutate(MomDropout = MothED <12) %>%
+               mutate(MomHS = MothED == 12) %>%
+              mutate(MomSomeColl = ifelse(MothED>=13,1,0))
+
+
+# Find average of each of the FE for 3 different variables(MothED, MomDropout, MomSomecoll)
+
+summary_MothED = clean %>% group_by(Race_Child, PreK) %>%
+  summarize(avg.MothED = mean(MothED,na.rm = TRUE),sd.MothED = sd(MothED, na.rm = TRUE)) 
+
+summary_MothED_FE = clean %>% group_by(Race_Child, PreK_FE) %>%
+  summarize(avg.MothED = mean(MothED,na.rm = TRUE),sd.MothED = sd(MothED, na.rm = TRUE))
+
+summary_MothED_FE <- summary_MothED_FE[-c(7, 8), ]
+
+summary_MomDropout = clean %>% group_by(Race_Child, PreK) %>%
+  summarize(avg.MomDropout = mean(MomDropout,na.rm = TRUE),sd.MomDropout = sd(MomDropout, na.rm = TRUE))
+
+summary_MomDropout_FE = clean %>% group_by(Race_Child, PreK_FE) %>%
+  summarize(avg.MomDropout = mean(MomDropout,na.rm = TRUE),sd.MomDropout = sd(MomDropout, na.rm = TRUE))
+
+summary_MomDropout_FE <- summary_MomDropout_FE[-c(7, 8), ]
+
+summary_MomSomecoll = clean %>% group_by(Race_Child, PreK) %>%
+  summarize(avg.MomSomeColl = mean(MomSomeColl,na.rm = TRUE),sd.MomSomeColl = sd(MomSomeColl, na.rm = TRUE))
+
+summary_MomSomecoll_FE = clean %>% group_by(Race_Child, PreK_FE) %>%
+  summarize(avg.MomSomeColl = mean(MomSomeColl,na.rm = TRUE),sd.MomSomeColl = sd(MomSomeColl, na.rm = TRUE))
+
+summary_MomSomecoll_FE <- summary_MomSomecoll_FE[-c(7, 8), ]
+```
+
+```{r}
+# Create age-adjusted maternal AFQT score
+clean = clean %>%
+  mutate(AgeAFQT=AFQT_Pct81_REV) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==14, AgeAFQT*(35.60881/28.79544), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==15, AgeAFQT*(35.60881/32.86273), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==16, AgeAFQT*(35.60881/32.86273), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==17, AgeAFQT*(35.60881/36.3544), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==18, AgeAFQT*(35.60881/33.45777), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==19, AgeAFQT*(35.60881/36.84), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==20, AgeAFQT*(35.60881/41.84536), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==21, AgeAFQT*(35.60881/40.95177), AFQT_Pct81_REV)) %>%
+  mutate(AgeAFQT=ifelse(Age_Mom79==22, AgeAFQT*(35.60881/42.82069), AFQT_Pct81_REV))
+
+  clean$AgeAFQT_std <- scale(clean$AgeAFQT)
+  
+  clean <- clean %>%
+  mutate(impAFQT_std = AgeAFQT_std)
+```
+
+```{r}
+clean$AgeAFQT_std <- as.numeric(clean$AgeAFQT_std)
+class(clean$AgeAFQT_std)
+class(clean$Black)
+class(clean$Hispanic)
+class(clean$Age_Moth_Birth)
+```
+
+```{r}
+# impute values for AFQT
+# Select columns for imputation
+vars_to_impute <- c("AgeAFQT_std", "Black", "Hispanic", "Age_Moth_Birth")
+
+# Perform imputation using mice for selected variables
+imputed_data <- mice(clean[, vars_to_impute], method = "norm", m = 5)
+
+# Obtain imputed values for the specified variables
+completed_data <- complete(imputed_data)
+
+# Imputed values only for AgeAFQT_std 
+imputed_AgeAFQT_std_values <- completed_data$AgeAFQT_std
+```
+
+
+```{r}
+# Mutate Imputed_AFQT_std column to replace any missing values of AFQT_Std column
+clean <- clean %>%
+  mutate(imputed_AFQT_std = ifelse(is.na(AgeAFQT_std), imputed_AgeAFQT_std_values, AgeAFQT_std))
+    
+summary_AgeAFQT_std = clean %>% group_by(Race_Child, PreK) %>%
+  summarize(avg.AgeAFQT_std = mean(AgeAFQT_std,na.rm = TRUE),sd.AgeAFQT_std = sd(AgeAFQT_std, na.rm = TRUE))
+
+summary_AgeAFQT_std_FE = clean %>% group_by(Race_Child, PreK_FE) %>%
+  summarize(avg.AgeAFQT_std = mean(AgeAFQT_std,na.rm = TRUE),sd.AgeAFQT_std = sd(AgeAFQT_std, na.rm = TRUE))
+
+summary_AgeAFQT_std_FE <- summary_AgeAFQT_std_FE[-c(7, 8), ]
+```
+
+
+```{r}
+# Based on the results above for each outcome we_create table
+summary_PermInc$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_PermInc$Race_Child[4:6] = c(rep("Black",3))
+summary_PermInc$PreK[c(1,4)] = "Head Start"
+summary_PermInc$PreK[c(2,5)] = "Preschool"
+summary_PermInc$PreK[c(3,6)] = "None"
+
+summary_PermInc_FE$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_PermInc_FE$Race_Child[4:6] = c(rep("Black",3))
+summary_PermInc_FE$PreK_FE[c(1,4)] = "Head Start"
+summary_PermInc_FE$PreK_FE[c(2,5)] = "Preschool"
+summary_PermInc_FE$PreK_FE[c(3,6)] = "None"
+
+summary_MothED$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MothED$Race_Child[4:6] = c(rep("Black",3))
+summary_MothED$PreK[c(1,4)] = "Head Start"
+summary_MothED$PreK[c(2,5)] = "Preschool"
+summary_MothED$PreK[c(3,6)] = "None"
+
+summary_MothED_FE$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MothED_FE$Race_Child[4:6] = c(rep("Black",3))
+summary_MothED_FE$PreK_FE[c(1,4)] = "Head Start"
+summary_MothED_FE$PreK_FE[c(2,5)] = "Preschool"
+summary_MothED_FE$PreK_FE[c(3,6)] = "None"
+
+summary_MomDropout$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MomDropout$Race_Child[4:6] = c(rep("Black",3))
+summary_MomDropout$PreK[c(1,4)] = "Head Start"
+summary_MomDropout$PreK[c(2,5)] = "Preschool"
+summary_MomDropout$PreK[c(3,6)] = "None"
+
+summary_MomDropout_FE$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MomDropout_FE$Race_Child[4:6] = c(rep("Black",3))
+summary_MomDropout_FE$PreK_FE[c(1,4)] = "Head Start"
+summary_MomDropout_FE$PreK_FE[c(2,5)] = "Preschool"
+summary_MomDropout_FE$PreK_FE[c(3,6)] = "None"
+
+summary_MomSomecoll$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MomSomecoll$Race_Child[4:6] = c(rep("Black",3))
+summary_MomSomecoll$PreK[c(1,4)] = "Head Start"
+summary_MomSomecoll$PreK[c(2,5)] = "Preschool"
+summary_MomSomecoll$PreK[c(3,6)] = "None"
+
+summary_MomSomecoll_FE$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_MomSomecoll_FE$Race_Child[4:6] = c(rep("Black",3))
+summary_MomSomecoll_FE$PreK_FE[c(1,4)] = "Head Start"
+summary_MomSomecoll_FE$PreK_FE[c(2,5)] = "Preschool"
+summary_MomSomecoll_FE$PreK_FE[c(3,6)] = "None"
+
+summary_AgeAFQT_std$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_AgeAFQT_std$Race_Child[4:6] = c(rep("Black",3))
+summary_AgeAFQT_std$PreK[c(1,4)] = "Head Start"
+summary_AgeAFQT_std$PreK[c(2,5)] = "Preschool"
+summary_AgeAFQT_std$PreK[c(3,6)] = "None"
+
+summary_AgeAFQT_std_FE$Race_Child[1:3] = c(rep("White/Hispanic",3))
+summary_AgeAFQT_std_FE$Race_Child[4:6] = c(rep("Black",3))
+summary_AgeAFQT_std_FE$PreK_FE[c(1,4)] = "Head Start"
+summary_AgeAFQT_std_FE$PreK_FE[c(2,5)] = "Preschool"
+summary_AgeAFQT_std_FE$PreK_FE[c(3,6)] = "None"
+
+
+# Vectorization Process to create the data frame for each different variable
+
+# PermInc
+as.vector(summary_PermInc$avg.PermInc)
+as.vector(summary_PermInc$sd.PermInc)
+as.vector(summary_PermInc_FE$avg.PermInc)
+as.vector(summary_PermInc_FE$sd.PermInc)
+
+# AgeAFQT
+as.vector(summary_AgeAFQT_std$avg.AgeAFQT_std)
+as.vector(summary_AgeAFQT_std$sd.AgeAFQT_std )
+as.vector(summary_AgeAFQT_std_FE$avg.AgeAFQT_std)
+as.vector(summary_AgeAFQT_std_FE$sd.AgeAFQT_std)
+
+# MothED
+as.vector(summary_MothED$avg.MothED)
+as.vector(summary_MothED$sd.MothED)
+as.vector(summary_MothED_FE$avg.MothED)
+as.vector(summary_MothED_FE$sd.MothED)
+
+# MomDropout
+as.vector(summary_MomDropout$avg.MomDropout)
+as.vector(summary_MomDropout$sd.MomDropout)
+as.vector(summary_MomDropout_FE$avg.MomDropout)
+as.vector(summary_MomDropout_FE$sd.MomDropout)
+
+# MomDropout
+as.vector(summary_MomSomecoll$avg.MomSomeColl)
+as.vector(summary_MomSomecoll$sd.MomSomeColl)
+as.vector(summary_MomSomecoll_FE$avg.MomSomeColl)
+as.vector(summary_MomSomecoll_FE$sd.MomSomeColl)
+
+table1 = rbind(
+as.vector(summary_PermInc$avg.PermInc),
+as.vector(summary_PermInc$sd.PermInc),
+as.vector(summary_PermInc_FE$avg.PermInc),
+as.vector(summary_PermInc_FE$sd.PermInc),
+as.vector(summary_MomDropout$avg.MomDropout),
+as.vector(summary_MomDropout$sd.MomDropout),
+as.vector(summary_MomDropout_FE$avg.MomDropout),
+as.vector(summary_MomDropout_FE$sd.MomDropout),
+as.vector(summary_MomSomecoll$avg.MomSomeColl),
+as.vector(summary_MomSomecoll$sd.MomSomeColl),
+as.vector(summary_MomSomecoll_FE$avg.MomSomeColl),
+as.vector(summary_MomSomecoll_FE$sd.MomSomeColl),
+as.vector(summary_AgeAFQT_std$avg.AgeAFQT_std),
+as.vector(summary_AgeAFQT_std$sd.AgeAFQT_std),
+as.vector(summary_AgeAFQT_std_FE$avg.AgeAFQT_std),
+as.vector(summary_AgeAFQT_std_FE$sd.AgeAFQT_std),
+as.vector(summary_MothED$avg.MothED),
+as.vector(summary_MothED$sd.MothED),
+as.vector(summary_MothED_FE$avg.MothED),
+as.vector(summary_MothED_FE$sd.MothED)
+)
+
+# Sample size and Sample size FE head start White/Hispanic and Black
+Hs_white_hispnaic = table(clean$PreK[clean$Race_Child==1])[["1"]]
+Hs_black = table(clean$PreK[clean$Race_Child == 2])[["1"]] 
+Hs_white_hispnaic_FE = table(clean$PreK_FE[clean$Race_Child==1])[["1"]]
+Hs_black_FE = table(clean$PreK_FE[clean$Race_Child == 2])[["1"]] 
+
+# Sample size and Sample size FE Preschool White/Hispanic and Black
+Pre_white_hispnaic = table(clean$PreK[clean$Race_Child==1])[["2"]] 
+Pre_black = table(clean$PreK[clean$Race_Child == 2])[["2"]] 
+Pre_white_hispnaic_FE = table(clean$PreK_FE[clean$Race_Child==1])[["2"]]
+Pre_black_FE = table(clean$PreK_FE[clean$Race_Child == 2])[["2"]] 
+
+# Sample size and Sample size FE None white/Hispanic and Black
+None_white_hispnaic = table(clean$PreK[clean$Race_Child==1])[["3"]] 
+None_black = table(clean$PreK[clean$Race_Child == 2])[["3"]] 
+None_white_hispnaic_FE = table(clean$PreK_FE[clean$Race_Child==1])[["3"]]
+None_black_FE = table(clean$PreK_FE[clean$Race_Child == 2])[["3"]] 
+
+# Sample size and sample_size_FE
+sample_size = c(
+      Hs_white_hispnaic,
+      Pre_white_hispnaic,
+      None_white_hispnaic,
+      Hs_black,
+      Pre_black,
+      None_black)
+sample_size_FE = c(
+      Hs_white_hispnaic_FE,
+      Pre_white_hispnaic_FE,
+      None_white_hispnaic_FE,
+      Hs_black_FE,
+      Pre_black_FE,
+      None_black_FE
+)
+
+table1 = rbind(table1,sample_size,sample_size_FE)
+
+# Column and Row names
+colnames(table1) = c(rep(c("Head Start","Preschool","None"),2))
+rownames(table1) = c("Permanent Income(Mean)", "Permanent Income(sd)", "Fixed effects subsample(Mean)","Fixed effects subsample(sd)","mother < high(Mean)","mother < high(sd)",
+                     "Fixed effects subsample(Mean)","Fixed effects subsample(sd)","Mother Some College(Mean)","Mother Some College(sd)","Fixed effects subsample(Mean)","Fixed      effects subsample(sd)","Maternal AFQT(Mean)","Maternal AFQT(sd)","Fixed effects subsample(Mean)","Fixed effects subsample(sd)","Grand Mother's Education(Mean)","Grand Mother's Education(sd)","Fixed effects subsample(Mean)","Fixed effects subsample(sd)","Sample size","Sample size — FE")
+table1 = as.data.frame(table1)
+table1 = round(table1,2)
+latex_table <- knitr::kable(table1, caption = 'Selected Family and Maternal Characteristics, by Race and Preschool Status') # Table 1 (formatting as a latex table)
+print(latex_table)
+```
 
 
 
