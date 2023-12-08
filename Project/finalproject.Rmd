@@ -4,7 +4,7 @@ subtitle: "Stat 156, Fall 2023"
 author: "Minjae Seo, Cheng Zeng"
 output: github_document
 fontsize: 12pt
-urlcolor: blue
+urlcolor: yellow
 ---
 
 ```{r read, echo = FALSE, message = FALSE}
